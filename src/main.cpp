@@ -1,10 +1,10 @@
-#include "esp32-hal-gpio.h"
 #include <Arduino.h>
 #include <AccelStepper.h>
 
-
 const int dir_pin = 27; 
 const int pul_pin = 25; 
+const int limit_switch_pin = 26; 
+const int HOMING_SPEED = -5000;  
 AccelStepper slider(AccelStepper::DRIVER, pul_pin, dir_pin);
 
 const float STEPS_PER_MM = 40.0; 
@@ -15,10 +15,9 @@ const int l_en_pin = 21;
 const int r_pwm_pin = 22; 
 const int l_pwm_pin = 23; 
 
+const int ALPHA_PLUCK = 200;   
 const int PLUCK_DURATION = 80; 
 bool strum_direction = true;
-
-
 
 struct Note {
   int fret;
@@ -26,26 +25,65 @@ struct Note {
 };
 
 Note melody[] = {
-  {0, 1500}, 
-  {3, 1000}, 
-  {5, 1500}, 
+
+//{note, durée(s)}
+
+//Au clerc de la Lune
+  /*{0, 2000},
+  {0, 500},
+  {0, 500},
+  {0, 500},
+  {2, 1000},
+  {4, 1000},
+  {2, 500},
+  {0, 500},
+  {4, 500},
+  {2, 500},
+  {2, 2000},
+  {0, 500},
+  {0, 500},
+  {0, 500},
+  {0, 500},
+  {2, 1000},
+  {4, 1000},
+  {2, 500},
+  {0, 500},
+  {4, 500},
+  {2, 500},
+  {0, 2000}*/
   
-  {0, 1500}, 
-  {3, 1000}, 
-  {6, 600},  
-  {5, 2000}, 
-  
-  {0, 1500}, 
-  {3, 1000}, 
-  {5, 1500}, 
-  {3, 1000}, 
-  {0, 3000}  
+//Smoke on the Water
+  {0, 500},
+  {0, 500},
+  {3, 750},
+  {5, 500},
+  {0, 500},
+  {3, 250},
+  {6, 1000},
+  {5, 500},
+  {0, 500},
+  {3, 750},
+  {5, 500},
+  {3, 1750},
+  {0, 500},
+  {0, 500},
+  {3, 750},
+  {5, 500},
+  {0, 500},
+  {3, 250},
+  {6, 1000},
+  {5, 500},
+  {0, 500},
+  {3, 750},
+  {5, 500},
+  {3, 1750},
+  {0, 2000}
+
 };
 
 int note_index = 0;
-int melody_size = 12; 
+int melody_size = 25;
 unsigned long note_timer = 0;
-
 
 enum RobotState { PLUCKING, MOVING_AND_WAITING, FINISHED };
 RobotState currentState = PLUCKING;
@@ -56,8 +94,33 @@ void setup() {
   Serial.begin(115200);
 
   slider.setCurrentPosition(0);
-  slider.setMaxSpeed(38000.0); 
-  slider.setAcceleration(36000.0);
+
+  pinMode(limit_switch_pin, INPUT_PULLUP);
+
+  slider.setMaxSpeed(128000.0); 
+  slider.setAcceleration(128000.0);
+
+  slider.setSpeed(HOMING_SPEED);
+  
+
+  while(digitalRead(limit_switch_pin) == LOW){
+    if(digitalRead(limit_switch_pin) == LOW){
+      slider.runSpeed();
+    }else{
+      slider.stop();
+    }
+  }
+  
+
+  slider.setCurrentPosition(0); 
+
+  slider.moveTo(300); 
+  while (slider.distanceToGo() != 0) {
+    slider.run();
+  }
+
+  slider.setCurrentPosition(0);
+
 
   pinMode(r_en_pin, OUTPUT);
   pinMode(l_en_pin, OUTPUT);
@@ -69,25 +132,25 @@ void setup() {
   analogWrite(r_pwm_pin, 0); 
   analogWrite(l_pwm_pin, 0); 
 
-  delay(3000); 
+  delay(1000);
 }
 
 void loop() {
   slider.run(); 
 
   uint32_t now_millis = millis();
-
   switch (currentState) {
+    
     case PLUCKING: {
       Serial.print("Gratte Frette "); 
       Serial.println(melody[note_index].fret);
 
       if (strum_direction) {
-        digitalWrite(l_pwm_pin, LOW);
-        digitalWrite(r_pwm_pin, HIGH);
+        analogWrite(l_pwm_pin, 0);
+        analogWrite(r_pwm_pin, ALPHA_PLUCK);
       } else {
-        digitalWrite(r_pwm_pin, LOW);
-        digitalWrite(l_pwm_pin, HIGH);
+        analogWrite(r_pwm_pin, 0);
+        analogWrite(l_pwm_pin, ALPHA_PLUCK);
       }
       
       strum_direction = !strum_direction;
@@ -98,8 +161,8 @@ void loop() {
       currentState = MOVING_AND_WAITING;
       break;
     } 
-    case MOVING_AND_WAITING: { 
-      
+
+    case MOVING_AND_WAITING: {
       if (now_millis - note_timer > PLUCK_DURATION) {
         analogWrite(r_pwm_pin, 0);
         analogWrite(l_pwm_pin, 0);
@@ -116,18 +179,35 @@ void loop() {
 
       if (!move_started) {
         int target_fret = melody[next_index].fret;
-        long target_position = fret_positions_mm[target_fret] * STEPS_PER_MM;
-        slider.moveTo(target_position); 
+        long target_steps = (long)(fret_positions_mm[target_fret] * STEPS_PER_MM);
+        
+        if (slider.targetPosition() != target_steps) {
+            slider.moveTo(target_steps);
+            Serial.print("Départ vers frette "); Serial.println(target_fret);
+        } else {
+            Serial.println("Note identique : pas de mouvement moteur nécessaire.");
+        }
+        
         move_started = true;
       }
 
-      if (move_started && (now_millis - note_timer >= melody[note_index].duration) && slider.distanceToGo() == 0) {
+      bool time_is_up = (now_millis - note_timer >= melody[note_index].duration);
+      bool motor_arrived = (slider.distanceToGo() == 0);
+
+      if (time_is_up && motor_arrived) {
         note_index++; 
+        move_started = false; 
         currentState = PLUCKING; 
       }
       break;
-    }
+    } 
+
     case FINISHED: {
+      analogWrite(r_pwm_pin, 0);
+      analogWrite(l_pwm_pin, 0);
+      
+      digitalWrite(r_en_pin, LOW);
+      digitalWrite(l_en_pin, LOW);
       break;
     }
   }
