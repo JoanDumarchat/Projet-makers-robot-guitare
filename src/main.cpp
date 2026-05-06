@@ -15,7 +15,6 @@ const int l_en_pin = 21;
 const int r_pwm_pin = 22; 
 const int l_pwm_pin = 23; 
 
-const int ALPHA_PLUCK = 200;   
 const int PLUCK_DURATION = 80; 
 bool strum_direction = true;
 
