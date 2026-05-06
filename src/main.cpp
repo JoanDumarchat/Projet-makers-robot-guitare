@@ -1,3 +1,4 @@
+#include "esp32-hal-gpio.h"
 #include <Arduino.h>
 #include <AccelStepper.h>
 
@@ -83,11 +84,11 @@ void loop() {
       Serial.println(melody[note_index].fret);
 
       if (strum_direction) {
-        analogWrite(l_pwm_pin, 0);
-        analogWrite(r_pwm_pin, ALPHA_PLUCK);
+        digitalWrite(l_pwm_pin, LOW);
+        digitalWrite(r_pwm_pin, HIGH);
       } else {
-        analogWrite(r_pwm_pin, 0);
-        analogWrite(l_pwm_pin, ALPHA_PLUCK);
+        digitalWrite(r_pwm_pin, LOW);
+        digitalWrite(l_pwm_pin, HIGH);
       }
       
       strum_direction = !strum_direction;
